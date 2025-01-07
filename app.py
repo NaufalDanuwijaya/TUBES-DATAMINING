@@ -2,6 +2,38 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+# RANDOM FOREST
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from imblearn.over_sampling import SMOTE
+from collections import Counter
+
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+df = pd.read_csv("hasil_clustering.csv")
+
+X = df[['total_transactions', 'total_products', 'total_unique_products', 'total_sales',
+          'avg_product_value', 'avg_cart_value', 'min_cart_value', 'max_cart_value']]
+y = df['Cluster']
+
+# Menggunakan SMOTE untuk balancing
+smote = SMOTE(random_state=42)
+X_resampled, y_resampled = smote.fit_resample(X, y)
+
+# Membagi data menjadi Training dan Testing set
+X_train, X_test, y_train, y_test = train_test_split(X_resampled, y_resampled, test_size=0.2, random_state=42, stratify=y_resampled)
+
+# Inisialisasi Random Forest Classifier
+rf_model= RandomForestClassifier(n_estimators=100, random_state=42)
+
+# Melatih model
+rf_model.fit(X_train, y_train)
+
+# Prediksi pada data testing
+y_pred = rf_model.predict(X_test)
+
 # Page Config
 st.set_page_config(page_title="Data Mining", layout="wide")
 
@@ -14,6 +46,11 @@ st.markdown("""
         color: #FFFFFF;
     }
 
+    /* Change the color of input labels to white */
+    label {
+        color: #FFFFFF !important;
+    }
+    
     /* Header styling */
     .main-header {
         padding: 2rem 1rem;
@@ -77,9 +114,21 @@ st.markdown("""
     .stButton>button:hover {
         background-color: #FF85C1;
     }
-
 </style>
 """, unsafe_allow_html=True)
+
+# Load Data with Caching for Performance
+@st.cache_data
+def load_data():
+    transactions_path = "cleaned_transactions.csv"
+    clustering_path = "hasil_clustering.csv"
+
+    transactions_data = pd.read_csv(transactions_path, parse_dates=['InvoiceDate'])
+    clustering_data = pd.read_csv(clustering_path)
+
+    return transactions_data, clustering_data
+
+transactions_data, clustering_data = load_data()
 
 # Header Section with Enhanced Styling
 st.markdown("""
@@ -89,21 +138,12 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Load Data with Caching for Performance
-@st.cache_data
-def load_data():
-    data_path = "cleaned_transactions.csv"
-    data = pd.read_csv(data_path, parse_dates=['InvoiceDate'])  # Ensure date parsing
-    return data
-
-data = load_data()
-
-# Sidebar for Filters (Enhancing User Control)
+# Sidebar for Filters
 st.sidebar.header("Filters")
-selected_country = st.sidebar.selectbox("Select Country", options=["All"] + sorted(data["Country"].unique()))
+selected_country = st.sidebar.selectbox("Select Country", options=["All"] + sorted(transactions_data["Country"].unique()))
 
-# Filter Data Based on User Selections
-filtered_data = data.copy()
+# Filter Transactions Data Based on User Selections
+filtered_data = transactions_data.copy()
 if selected_country != "All":
     filtered_data = filtered_data[filtered_data["Country"] == selected_country]
 
@@ -161,7 +201,6 @@ with chart1:
     fig.update_traces(line=dict(color='#FF69B4'))
     fig.update_layout(showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
 with chart2:
     st.markdown("#### Top 10 Products by Sales")
@@ -173,33 +212,77 @@ with chart2:
                  color='Sales',
                  color_continuous_scale='RdBu')
     st.plotly_chart(fig, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
-insight1 = st.container()
+# Customer Segmentation Visualizations
+st.markdown("### Customer Segmentation")
 
-with insight1:
-    st.markdown("#### Sales by Country")
-    sales_country = filtered_data.groupby('Country')['Sales'].sum().reset_index()
-    fig = px.choropleth(sales_country, locations='Country',
-                        locationmode='country names',
-                        color='Sales',
-                        hover_name='Country',
-                        color_continuous_scale='RdBu',
-                        title='Global Sales Distribution',
-                        template='plotly_dark')
-    st.plotly_chart(fig, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+# Pie Chart of Customer Segments
+st.markdown("#### Distribution of Customer Segments")
+segment_distribution = clustering_data['Customer_Segment'].value_counts().reset_index()
+segment_distribution.columns = ['Segment', 'Count']
+fig = px.pie(segment_distribution, values='Count', names='Segment', 
+             title='Customer Segment Distribution', 
+             template='plotly_dark',
+             color_discrete_sequence=px.colors.qualitative.Pastel)
+st.plotly_chart(fig, use_container_width=True)
+
+# Scatter Plot of Clustering Results
+st.markdown("#### Customer Clusters")
+fig = px.scatter(clustering_data, x='avg_cart_value', y='total_sales', 
+                 color='Cluster',
+                 size='total_transactions',
+                 hover_data=['CustomerID'],
+                 title='Customer Clusters Based on Avg Cart Value and Total Sales',
+                 labels={'avg_cart_value': 'Avg Cart Value', 'total_sales': 'Total Sales'},
+                 template='plotly_dark')
+st.plotly_chart(fig, use_container_width=True)
+
+# Predict Customer Cluster
+st.markdown("### Predict Customer Cluster")
+st.markdown("Use the inputs below to predict the customer cluster.")
+
+# Input fields
+col1, col2 = st.columns(2)
+with col1:
+    total_transactions = st.number_input("Total Transactions", min_value=0, value=0)
+    total_products = st.number_input("Total Products", min_value=0, value=0)
+    total_unique_products = st.number_input("Total Unique Products", min_value=0, value=0)
+    min_cart_value = st.number_input("Minimum Cart Value", min_value=0.0, value=0.0)
+    max_cart_value = st.number_input("Maximum Cart Value", min_value=0.0, value=0.0)
+with col2:
+    total_sales = st.number_input("Total Sales", min_value=0.0, value=0.0)
+    avg_product_value = st.number_input("Average Product Value", min_value=0.0, value=0.0)
+    avg_cart_value = st.number_input("Average Cart Value", min_value=0.0, value=0.0)
+
+# Predict Button
+if st.button("Predict Cluster"):
+    # Create a DataFrame for prediction
+    input_data = pd.DataFrame({
+        'total_transactions': [total_transactions],
+        'total_products': [total_products],
+        'total_unique_products': [total_unique_products],
+        'total_sales': [total_sales],
+        'avg_product_value': [avg_product_value],
+        'avg_cart_value': [avg_cart_value],
+        'min_cart_value': [min_cart_value],
+        'max_cart_value': [max_cart_value] 
+    })
+
+    # Perform prediction
+    try:
+        cluster_prediction = rf_model.predict(input_data)[0]
+        st.success(f"The customer belongs to Cluster {cluster_prediction}.")
+    except ValueError as e:
+        st.error(f"Error: {e}")
 
 # Data Table with Enhanced Styling and Pagination
 st.markdown("### Detailed Data Table")
-st.markdown('<div>', unsafe_allow_html=True)
 st.dataframe(filtered_data.reset_index(drop=True).style.set_properties(**{
     'background-color': '#2C3333',
     'color': 'white',
     'border-color': '#2C3333',
     'font-size': '14px'
 }))
-st.markdown('</div>', unsafe_allow_html=True)
 
 # Footer Section
 st.markdown("""
